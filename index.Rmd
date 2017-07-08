@@ -1,0 +1,145 @@
+---
+title: "Prediction Assigment Write Up"
+author: "Alberto Jaimes"
+date: "July 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(magrittr)
+library(tidyverse)
+library(janitor)
+library(caret)
+```
+
+# Practical Machine Learning  
+
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  In this project assigment, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise, this is the *classe* variable in the *training* dataset.  
+
+
+##  Background  
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+### Objective  
+
+In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+##  Data Loading  
+
+I downloaded [training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and [testing](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) data sets, stored in a folder called *Datos*, loaded them, and delete the first column in each case, for it is the row names.  
+
+```{r loading, message = FALSE, warning = FALSE, cache = TRUE}
+training_raw <- read_csv("Datos/pml-training.csv")[, -1]
+testing_raw  <- read_csv("Datos/pml-testing.csv")[, -1]
+```
+
+##  Cleaning  
+
+I d elete empty variables in the test set, for they provide no information; then, keep those variables in training, for they are the predictors useful use to predict *classe*.  The column *new_window* in test dataset has only **no** as value; so, I keep only rows in training dataset with *no* value in *new_window*; after that I remove that variable in both datasets. Finally, I remove observations with *NA*'s.  
+
+```{r cleansing, , cache = TRUE}
+# delete empty columns
+testing_complete <- remove_empty_cols(testing_raw) 
+# keep variables present in testing
+variables <- intersect(names(training_raw), names(testing_complete))
+training <- training_raw[, c(variables, "classe")] %>% 
+    filter(new_window == "no") %>% select(-new_window) %>% 
+    na.omit()
+#
+testing <- select(testing_complete, -new_window)
+```
+```{r}
+dim(training)
+dim(testing)
+```
+
+
+## Data Split  
+
+I will estimate the *out of sample error* in the *training* dataset; in order to do that, the whole training was made in the *training* dataset. I splited *training* in sub sets: *building* set and *validation* set, the first for training the models, and the second to get the out of sample error estimate; I assigned 75% to building, and 25% to validation  
+ 
+```{r split, cache = TRUE}
+set.seed(1642)
+in_train <- createDataPartition(training$classe, p = 0.75, list = FALSE)    
+training_build      <- training[in_train, ]
+training_validation <- training[-in_train, ]
+```
+```{r}
+dim(training_build)
+dim(training_validation)
+```
+
+
+## Training  
+
+I trained threee models, a *random forest*, a *recursive partitioned three*, and a  *gradient boosting machine*, with default parameters.  
+
+I modeled *classe* as a function of the other variables, using *centering* and *scaling* as preprocessing; to improve the results I used *cross validation* within *train*, with 3 resamplings.  A random set ensured reproducibility.
+
+```{r train, eval = FALSE}
+# random forest
+set.seed(142)
+model_rf    <- train(classe ~ ., data = training_build, method = "rf",
+                  preProcess = c("center", "scale"), 
+                  trControl = trainControl(method = "cv", number = 3))
+# rpart
+set.seed(9879)
+model_rpart <- train(classe ~ ., data = training_build, method = "rpart",
+                         preProcess = c("center", "scale"),
+                     trControl = trainControl(method = "cv", number = 3))
+# gradient boosting machine
+set.seed(124)
+model_gbm   <- train(classe ~ ., data = training_build, method = "gbm", 
+                   preProcess = c("center", "scale"), verbose = FALSE,
+                   trControl = trainControl(method = "cv", number = 3))
+```
+```{r load_models, echo = FALSE, cache = TRUE}
+model_rf    <- read_rds("Models/model_rf.rds")
+model_gbm   <- read_rds("Models/model_gmb.rds")
+model_rpart <- read_rds("Models/model_rpart.rds")
+
+```
+
+
+##  Prediction  
+
+A call to the *predict* function using the subset of training data for validation, gave us an out of sample error estimate.
+
+```{r predicton, message = FALSE}
+pred_rf <- predict(model_rf, training_validation) %>% as.character()
+pred_gbm <- predict(model_gbm, training_validation) %>% as.character()
+pred_rpart <- predict(model_rpart, training_validation) %>% as.character()
+```
+
+###  Evaluation  
+
+```{r accuracy, cache = TRUE, message = FALSE, warning = FALSE}
+confusionMatrix(pred_rf, training_validation$classe)
+confusionMatrix(pred_rpart, training_validation$classe)
+confusionMatrix(pred_gbm, training_validation$classe)
+```
+The best accuracy was given by the *random forest* model, followed close by *gbm*; the accuracy was 99.92%.
+
+
+## Prediction in *testing* data set  
+
+The *ramdom forest* was the best model, it will be use to predict the *classe* variable in the *testing* data set.
+
+```{r prediction_in_testing, cache = TRUE}
+pred_rf_testing <- predict(model_rf, select(testing, -problem_id))
+pred_rf_testing
+```
+
+These prediction resulted in a 20 / 20 poins in the *Course Project Prediction Quizz*
+
+
+## References  
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more : http://groupware.les.inf.puc-rio.br/har#ixzz4mGHU0UZ2
+
+
